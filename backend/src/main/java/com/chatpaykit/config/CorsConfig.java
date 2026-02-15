@@ -15,19 +15,18 @@ public class CorsConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration cfg = new CorsConfiguration();
 
-        // ✅ Allow local dev + production frontend
-        cfg.setAllowedOrigins(List.of(
+        cfg.setAllowCredentials(true);
+
+        // ✅ Use patterns (better for Vercel + avoids exact-origin mismatch)
+        cfg.setAllowedOriginPatterns(List.of(
                 "http://localhost:5173",
+                "https://*.vercel.app",
                 "https://chatpaykit.vercel.app"
         ));
 
         cfg.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         cfg.setAllowedHeaders(List.of("*"));
-
-        // If you send JWT in Authorization header, expose it
         cfg.setExposedHeaders(List.of("Authorization"));
-
-        cfg.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", cfg);
