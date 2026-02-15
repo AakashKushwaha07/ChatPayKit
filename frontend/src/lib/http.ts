@@ -1,15 +1,10 @@
 import axios from "axios";
 
-export const http = axios.create({
-  baseURL: "http://localhost:8080",
-});
+const baseURL =
+  import.meta.env.VITE_API_BASE?.trim() ||
+  "http://localhost:8080";
 
-// Attach JWT on every request
-http.interceptors.request.use((config) => {
-  const token = localStorage.getItem("token");
-  if (token) {
-    config.headers = config.headers ?? {};
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
+export const http = axios.create({
+  baseURL,
+  withCredentials: true,
 });
