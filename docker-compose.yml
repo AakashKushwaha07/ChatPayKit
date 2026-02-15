@@ -1,0 +1,15 @@
+services:
+  db:
+    image: postgres:16
+    container_name: chatpaykit-db
+    environment:
+      POSTGRES_DB: chatpaykit
+      POSTGRES_USER: chatpaykit
+      POSTGRES_PASSWORD: chatpaykit
+    ports:
+      - "5432:5432"
+    volumes:
+      - chatpaykit_pgdata:/var/lib/postgresql/data
+
+volumes:
+  chatpaykit_pgdata:
