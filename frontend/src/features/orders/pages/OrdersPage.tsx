@@ -68,8 +68,6 @@ const TERMINAL = new Set(["PAID", "REFUNDED", "EXPIRED"]);
 
 // ✅ Convert any Axios/Spring error into a safe string
 function toErrorMessage(e: any): string {
-  const status = e?.response?.status;
-
   // Spring Boot default error body often has {timestamp,status,error,path,message}
   const data = e?.response?.data;
 
@@ -77,8 +75,8 @@ function toErrorMessage(e: any): string {
 
   if (data && typeof data === "object") {
     // prefer known fields
-    if (typeof data.message === "string") return data.message;
-    if (typeof data.error === "string") return data.error;
+    if (typeof (data as any).message === "string") return (data as any).message;
+    if (typeof (data as any).error === "string") return (data as any).error;
     // fallback: stringify object safely
     try {
       return JSON.stringify(data);
@@ -380,7 +378,9 @@ export default function OrdersPage() {
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Orders ({total})</h1>
-          <p className="text-xs text-zinc-500 mt-1">Last updated: {lastUpdated}</p>
+          <p className="text-xs text-zinc-500 mt-1">
+            Last updated: {lastUpdated}
+          </p>
         </div>
 
         <div className="flex flex-col gap-2 md:flex-row md:items-center">
@@ -452,7 +452,9 @@ export default function OrdersPage() {
           />
         </div>
         <div className="flex items-center gap-3">
-          <button className="bg-white text-black px-4 py-2 rounded">Create Order</button>
+          <button className="bg-white text-black px-4 py-2 rounded">
+            Create Order
+          </button>
           <span className="text-xs text-zinc-400">
             Status in UI is fetched from Razorpay via /sync (not only DB).
           </span>
@@ -480,7 +482,6 @@ export default function OrdersPage() {
         <div className="space-y-3">
           {filteredOrders.map((o) => {
             const isBusy = busyId === o.id;
-
             const live = o.liveStatus || o.status || "CREATED";
 
             const canSendPayment = live === "CREATED" || live === "FAILED";
@@ -504,12 +505,15 @@ export default function OrdersPage() {
                     </div>
 
                     <div className="text-sm text-zinc-300">
-                      WhatsApp: <span className="font-mono">{o.customerWhatsapp || "-"}</span>
+                      WhatsApp:{" "}
+                      <span className="font-mono">{o.customerWhatsapp || "-"}</span>
                     </div>
 
                     <div className="text-sm text-zinc-300">
                       Amount:{" "}
-                      <span className="font-medium">{formatRupeesFromPaise(o.amountPaise)}</span>
+                      <span className="font-medium">
+                        {formatRupeesFromPaise(o.amountPaise)}
+                      </span>
                     </div>
 
                     <div className="text-xs text-zinc-500">
@@ -529,7 +533,9 @@ export default function OrdersPage() {
                         <button
                           type="button"
                           className="underline hover:text-zinc-300"
-                          onClick={() => copy(o.razorpayOrderId!, "Razorpay Order ID copied ✅")}
+                          onClick={() =>
+                            copy(o.razorpayOrderId!, "Razorpay Order ID copied ✅")
+                          }
                         >
                           {shortId(o.razorpayOrderId)}
                         </button>
@@ -542,7 +548,9 @@ export default function OrdersPage() {
                         <button
                           type="button"
                           className="underline hover:text-zinc-300"
-                          onClick={() => copy(o.razorpayPaymentId!, "Payment ID copied ✅")}
+                          onClick={() =>
+                            copy(o.razorpayPaymentId!, "Payment ID copied ✅")
+                          }
                         >
                           {shortId(o.razorpayPaymentId)}
                         </button>
@@ -555,11 +563,7 @@ export default function OrdersPage() {
                       type="button"
                       disabled={!canSendPayment || isBusy}
                       onClick={() =>
-                        doAction(
-                          o.id,
-                          () => OrdersAPI.sendPayment(o.id),
-                          "Payment request sent ✅"
-                        )
+                        doAction(o.id, () => OrdersAPI.sendPayment(o.id), "Payment request sent ✅")
                       }
                       className={`px-3 py-1.5 rounded text-sm ${
                         canSendPayment && !isBusy
