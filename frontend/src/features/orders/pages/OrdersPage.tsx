@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { OrdersAPI } from "../orders.api";
+import { useNavigate } from "react-router-dom";
 
 type Order = {
   id: string;
@@ -65,11 +66,43 @@ function shortId(id?: string | null) {
 
 const TERMINAL = new Set(["PAID", "REFUNDED", "EXPIRED"]);
 
+// ✅ Convert any Axios/Spring error into a safe string
+function toErrorMessage(e: any): string {
+  const status = e?.response?.status;
+
+  // Spring Boot default error body often has {timestamp,status,error,path,message}
+  const data = e?.response?.data;
+
+  if (typeof data === "string") return data;
+
+  if (data && typeof data === "object") {
+    // prefer known fields
+    if (typeof data.message === "string") return data.message;
+    if (typeof data.error === "string") return data.error;
+    // fallback: stringify object safely
+    try {
+      return JSON.stringify(data);
+    } catch {
+      return "Request failed";
+    }
+  }
+
+  if (typeof e?.message === "string") return e.message;
+
+  // last fallback
+  return "Request failed";
+}
+
 export default function OrdersPage() {
+  const nav = useNavigate();
+
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState("");
-  const [info, setInfo] = useState("");
+
+  // ✅ keep only strings
+  const [err, setErr] = useState<string>("");
+  const [info, setInfo] = useState<string>("");
+
   const [busyId, setBusyId] = useState<string | null>(null);
 
   // CreateOrderRequest fields
@@ -108,7 +141,8 @@ export default function OrdersPage() {
         (o.id || "").toLowerCase().includes(q);
 
       const effectiveStatus = o.liveStatus || o.status || "";
-      const matchStatus = statusFilter === "ALL" ? true : effectiveStatus === statusFilter;
+      const matchStatus =
+        statusFilter === "ALL" ? true : effectiveStatus === statusFilter;
 
       return matchQ && matchStatus;
     });
@@ -137,10 +171,16 @@ export default function OrdersPage() {
       }
       setLastUpdated(new Date().toLocaleTimeString());
     } catch (e: any) {
+      // ✅ if token missing/expired → send user to login
+      if (e?.response?.status === 401 || e?.response?.status === 403) {
+        setOrders([]);
+        localStorage.removeItem("token");
+        nav("/login", { replace: true });
+        return;
+      }
+
       setOrders([]);
-      setErr(
-        e?.response?.data?.message || e?.response?.data || e?.message || "Failed to load orders"
-      );
+      setErr(toErrorMessage(e) || "Failed to load orders");
     } finally {
       if (!silent) setLoading(false);
     }
@@ -156,16 +196,26 @@ export default function OrdersPage() {
       const data = await OrdersAPI.sync(id);
       // /sync returns updated Order (ideal)
       setOrders((prev) =>
-        prev.map((o) => (o.id === id ? { ...o, ...(data as any), liveStatus: (data as any).status || o.liveStatus } : o))
+        prev.map((o) =>
+          o.id === id
+            ? {
+                ...o,
+                ...(data as any),
+                liveStatus: (data as any).status || o.liveStatus,
+              }
+            : o
+        )
       );
       setLastUpdated(new Date().toLocaleTimeString());
       if (!silent) setInfo("Live status updated ✅");
     } catch (e: any) {
-      if (!silent) {
-        setErr(
-          e?.response?.data?.message || e?.response?.data || e?.message || "Sync failed"
-        );
+      if (e?.response?.status === 401 || e?.response?.status === 403) {
+        localStorage.removeItem("token");
+        nav("/login", { replace: true });
+        return;
       }
+
+      if (!silent) setErr(toErrorMessage(e) || "Sync failed");
     } finally {
       if (!silent) setBusyId(null);
     }
@@ -233,7 +283,13 @@ export default function OrdersPage() {
       setAmountRupees("500");
       await loadList();
     } catch (e: any) {
-      setErr(e?.response?.data?.message || e?.response?.data || e?.message || "Create failed");
+      if (e?.response?.status === 401 || e?.response?.status === 403) {
+        localStorage.removeItem("token");
+        nav("/login", { replace: true });
+        return;
+      }
+
+      setErr(toErrorMessage(e) || "Create failed");
     }
   };
 
@@ -247,56 +303,66 @@ export default function OrdersPage() {
       await loadList(true);
       await syncOne(id, true); // after action, immediately sync from Razorpay
     } catch (e: any) {
-      setErr(e?.response?.data?.message || e?.response?.data || e?.message || "Action failed");
+      if (e?.response?.status === 401 || e?.response?.status === 403) {
+        localStorage.removeItem("token");
+        nav("/login", { replace: true });
+        return;
+      }
+
+      setErr(toErrorMessage(e) || "Action failed");
     } finally {
       setBusyId(null);
     }
   };
 
-const openCheckout = async (id: string) => {
-  setErr("");
-  setInfo("");
-  setBusyId(id);
+  const openCheckout = async (id: string) => {
+    setErr("");
+    setInfo("");
+    setBusyId(id);
 
-  try {
-    // Ensure Razorpay order exists
-    const current = orders.find((o) => o.id === id);
-    if (!current?.razorpayOrderId) {
-      await OrdersAPI.sendPayment(id);
-      await loadList(true);
+    try {
+      // Ensure Razorpay order exists
+      const current = orders.find((o) => o.id === id);
+      if (!current?.razorpayOrderId) {
+        await OrdersAPI.sendPayment(id);
+        await loadList(true);
+      }
+
+      const r = await OrdersAPI.checkoutUrl(id);
+
+      if (!r?.url) {
+        setErr("No checkout url returned");
+        return;
+      }
+
+      // ✅ IMPORTANT: pass token to checkout.html
+      const token = localStorage.getItem("token");
+      if (!token) {
+        setErr("Missing auth token. Please login again.");
+        nav("/login", { replace: true });
+        return;
+      }
+
+      const finalUrl =
+        r.url +
+        (r.url.includes("?") ? "&" : "?") +
+        `token=${encodeURIComponent(token)}`;
+
+      window.open(finalUrl, "_blank");
+      setInfo("Checkout opened ✅");
+      await syncOne(id, true);
+    } catch (e: any) {
+      if (e?.response?.status === 401 || e?.response?.status === 403) {
+        localStorage.removeItem("token");
+        nav("/login", { replace: true });
+        return;
+      }
+
+      setErr(toErrorMessage(e) || "Checkout failed");
+    } finally {
+      setBusyId(null);
     }
-
-    const r = await OrdersAPI.checkoutUrl(id);
-
-    if (!r?.url) {
-      setErr("No checkout url returned");
-      return;
-    }
-
-    // ✅ IMPORTANT: pass token to checkout.html
-    const token = localStorage.getItem("token");
-    if (!token) {
-      setErr("Missing auth token. Please login again.");
-      return;
-    }
-
-    const finalUrl =
-      r.url + (r.url.includes("?") ? "&" : "?") + `token=${encodeURIComponent(token)}`;
-
-    window.open(finalUrl, "_blank");
-    setInfo("Checkout opened ✅");
-    await syncOne(id, true);
-  } catch (e: any) {
-    setErr(
-      e?.response?.data?.message ||
-        e?.response?.data ||
-        e?.message ||
-        "Checkout failed"
-    );
-  } finally {
-    setBusyId(null);
-  }
-};
+  };
 
   const copy = async (text: string, ok = "Copied ✅") => {
     try {
@@ -432,24 +498,18 @@ const openCheckout = async (id: string) => {
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="font-semibold">{o.customerName || "-"}</div>
                       <StatusBadge status={live} />
-                      {/* optional: show DB status too */}
                       {o.status && o.status !== live ? (
-                        <span className="text-xs text-zinc-500">
-                          (DB: {o.status})
-                        </span>
+                        <span className="text-xs text-zinc-500">(DB: {o.status})</span>
                       ) : null}
                     </div>
 
                     <div className="text-sm text-zinc-300">
-                      WhatsApp:{" "}
-                      <span className="font-mono">{o.customerWhatsapp || "-"}</span>
+                      WhatsApp: <span className="font-mono">{o.customerWhatsapp || "-"}</span>
                     </div>
 
                     <div className="text-sm text-zinc-300">
                       Amount:{" "}
-                      <span className="font-medium">
-                        {formatRupeesFromPaise(o.amountPaise)}
-                      </span>
+                      <span className="font-medium">{formatRupeesFromPaise(o.amountPaise)}</span>
                     </div>
 
                     <div className="text-xs text-zinc-500">
@@ -469,9 +529,7 @@ const openCheckout = async (id: string) => {
                         <button
                           type="button"
                           className="underline hover:text-zinc-300"
-                          onClick={() =>
-                            copy(o.razorpayOrderId!, "Razorpay Order ID copied ✅")
-                          }
+                          onClick={() => copy(o.razorpayOrderId!, "Razorpay Order ID copied ✅")}
                         >
                           {shortId(o.razorpayOrderId)}
                         </button>
@@ -484,9 +542,7 @@ const openCheckout = async (id: string) => {
                         <button
                           type="button"
                           className="underline hover:text-zinc-300"
-                          onClick={() =>
-                            copy(o.razorpayPaymentId!, "Payment ID copied ✅")
-                          }
+                          onClick={() => copy(o.razorpayPaymentId!, "Payment ID copied ✅")}
                         >
                           {shortId(o.razorpayPaymentId)}
                         </button>
@@ -499,7 +555,11 @@ const openCheckout = async (id: string) => {
                       type="button"
                       disabled={!canSendPayment || isBusy}
                       onClick={() =>
-                        doAction(o.id, () => OrdersAPI.sendPayment(o.id), "Payment request sent ✅")
+                        doAction(
+                          o.id,
+                          () => OrdersAPI.sendPayment(o.id),
+                          "Payment request sent ✅"
+                        )
                       }
                       className={`px-3 py-1.5 rounded text-sm ${
                         canSendPayment && !isBusy
@@ -539,9 +599,7 @@ const openCheckout = async (id: string) => {
                     <button
                       type="button"
                       disabled={!canRetry || isBusy}
-                      onClick={() =>
-                        doAction(o.id, () => OrdersAPI.retry(o.id), "Retry initiated ✅")
-                      }
+                      onClick={() => doAction(o.id, () => OrdersAPI.retry(o.id), "Retry initiated ✅")}
                       className={`px-3 py-1.5 rounded text-sm ${
                         canRetry && !isBusy
                           ? "bg-zinc-200 text-black hover:opacity-90"
@@ -554,9 +612,7 @@ const openCheckout = async (id: string) => {
                     <button
                       type="button"
                       disabled={!canRefund || isBusy}
-                      onClick={() =>
-                        doAction(o.id, () => OrdersAPI.refund(o.id), "Refund initiated ✅")
-                      }
+                      onClick={() => doAction(o.id, () => OrdersAPI.refund(o.id), "Refund initiated ✅")}
                       className={`px-3 py-1.5 rounded text-sm ${
                         canRefund && !isBusy
                           ? "bg-amber-500 text-black hover:opacity-90"
