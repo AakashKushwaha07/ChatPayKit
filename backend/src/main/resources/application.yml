@@ -33,7 +33,8 @@ management:
 
 app:
   jwt:
-    secret: dev_secret_key_please_change_1234567890abcd
+    secret: ${APP_JWT_SECRET:dev_secret_key_please_change_1234567890abcd}
+
 
   admin:
     key: 1234
